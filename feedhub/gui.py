@@ -1,27 +1,32 @@
 #!/usr/bin/env python3
-r"""FeedHub -- a pure-stdlib tkinter GUI on top of the ``feedhub`` library.
+r"""FeedHub -- an Aura (QuickOpen design system) GUI on top of the ``feedhub``
+library.
 
-A single main window laid out as three panes:
+A single Aura window whose main **Feeds** section is a classic three-pane
+reader:
 
   * left    -- a tree of folders and feeds, each with an unread count;
-  * middle  -- the article list for the selected feed (star, read-state,
+  * middle  -- the article list for the selected scope (star / read dot,
     title and date);
   * right   -- a clean reader for the selected article (title, meta, rendered
     text) with an "Open in browser" button.
 
-A toolbar offers Add feed, Refresh (threaded), Mark all read and a search box.
-Feeds auto-refresh on a configurable timer.  Every network refresh runs on a
-background thread and is marshalled back with ``self.after`` so the UI never
-freezes; failures show the ``FeedHubError`` message in an inline bar, never a
-traceback.
+The header carries Add feed / Refresh (threaded) / Mark all read and a search
+box; a second **About** section describes the app.  Feeds auto-refresh on a
+configurable timer.  Every network refresh runs on a background thread and is
+marshalled back with ``self.after`` so the UI never freezes; failures show the
+``FeedHubError`` message in the Aura status bar, never a traceback.
 
-Design goals (mirrored from the QuickOpen house style):
-  * pure standard-library tkinter/ttk -- NO third-party GUI deps.  Dark mode is
-    a ttk-style + palette swap.
-  * Importing this module does nothing.  Only :func:`main` builds a root window,
-    and it degrades gracefully (prints a message, returns 0) with no display.
-  * Frozen-exe safe: bundled assets are resolved via ``sys._MEIPASS`` / the exe
-    directory when ``sys.frozen`` is set -- never ``__file__``.
+Design goals baked in here (mirrors the QuickOpen house style):
+  * built on the vendored ``feedhub/aura.py`` design system, which layers the
+    quickopen.ai look (deep space + light) over CustomTkinter.  Runtime deps:
+    ``customtkinter`` (+ ``darkdetect``) — declared in requirements.txt; the
+    PyInstaller build adds ``--collect-all customtkinter``.
+  * Importing this module does nothing.  Only :func:`main` builds a root
+    window, and it degrades gracefully (prints a message, returns 0) with no
+    display or with customtkinter missing.
+  * Frozen-exe safe: bundled assets are resolved via ``sys._MEIPASS`` / the
+    exe directory when ``sys.frozen`` is set -- never ``__file__``.
 
 100% AI-built, open source, published on QuickOpen (quickopen.ai).
 """
@@ -33,31 +38,15 @@ import sys
 import threading
 import webbrowser
 
-# NOTE: tkinter is imported lazily inside main()/build_app so that merely
-# importing this module (e.g. during packaging or on a headless CI box) is safe.
+# tkinter/customtkinter are imported lazily inside main()/build_app so merely
+# importing this module (e.g. during packaging or on a headless CI box) never
+# fails.
 
 APP_NAME = "FeedHub"
 APP_VERSION = "1.0.0"
 WINDOW_TITLE = "FeedHub — by QuickOpen (quickopen.ai)"
 PROJECT_URL = "https://quickopen.ai/projects/feed-hub"
-
-# ---- colour palettes (mirror the QuickOpen palette) -------------------------
-PALETTES = {
-    "light": {
-        "bg": "#f5f7fa", "surface": "#ffffff", "text": "#141820",
-        "muted": "#5b6472", "primary": "#2f5fe0", "primary_hi": "#2450c8",
-        "entry": "#ffffff", "border": "#d5dae2", "sel": "#2f5fe0",
-        "sel_fg": "#ffffff", "trough": "#e2e7ef", "ok": "#1f7a3d",
-        "err": "#c0392b",
-    },
-    "dark": {
-        "bg": "#0f1115", "surface": "#1a1e24", "text": "#f1f3f7",
-        "muted": "#9aa4b2", "primary": "#5b86f7", "primary_hi": "#7098ff",
-        "entry": "#1a1e24", "border": "#2a2f38", "sel": "#5b86f7",
-        "sel_fg": "#0f1115", "trough": "#2a2f38", "ok": "#5bd68a",
-        "err": "#ff6b5e",
-    },
-}
+ACCENT = "#b0700a"      # publish/specs/feed-hub.json "accent": [176, 112, 10]
 
 
 # ---------------------------------------------------------------------------
@@ -96,45 +85,47 @@ def open_url(url):
 
 
 # ---------------------------------------------------------------------------
-# The app (built lazily; tkinter imported only inside build_app/main)
+# The app (built lazily; tkinter/customtkinter imported only inside build_app)
 # ---------------------------------------------------------------------------
 def build_app():
-    """Construct and return the App class bound to a live tkinter import.
+    """Construct and return the App class bound to live GUI imports.
 
-    Kept inside a function so this module imports cleanly without a display.
+    Kept inside a function so this module imports cleanly without a display
+    (and without customtkinter installed).
     """
     import tkinter as tk
-    from tkinter import ttk, simpledialog, messagebox
+    from tkinter import ttk, simpledialog, messagebox, filedialog
+    import customtkinter as ctk
 
-    from . import guiconfig
+    from . import aura, guiconfig
     from .errors import FeedHubError
     from .store import Store
     from . import feeds as feeds_mod
     from . import opml as opml_mod
     from .reader import to_text
 
-    FONT = "Segoe UI"
-
     ALL_ID = "all"           # tree iid for the "All feeds" pseudo-node
     STARRED_ID = "starred"   # tree iid for the "Starred" pseudo-node
 
-    class App(tk.Tk):
+    class App(aura.AuraApp):
         def __init__(self, store_path=None):
-            super().__init__()
-            self.title(WINDOW_TITLE)
-            self.geometry("1180x720")
-            self.minsize(940, 560)
+            super().__init__(
+                title=WINDOW_TITLE, app_name=APP_NAME, accent=ACCENT,
+                theme=guiconfig.get_theme(),
+                icon_png=asset_path("feed-hub.png"), version=APP_VERSION,
+                tagline="RSS reader",
+                on_theme_change=guiconfig.set_theme,
+                size=(1180, 720), min_size=(940, 560))
 
             cfg = guiconfig.load()
-            self.theme = cfg["theme"]
             self._unread_only = cfg["unread_only"]
             self._refresh_minutes = cfg["refresh_minutes"]
             self._busy = False
-            self._tracked = []          # (tk_widget, role) for manual re-theming
-            self._img_refs = []         # keep PhotoImage refs alive
-            self._feed_iids = {}        # tree iid -> feed dict
-            self._article_iids = {}     # list iid -> article dict
-            self._current_feed = None   # selected feed dict, or None (=All)
+            self._font_family = aura._family()
+            self._img_refs_gui = []       # keep PhotoImage refs alive (own list)
+            self._feed_iids = {}          # tree iid -> feed dict
+            self._article_iids = {}       # list iid -> article dict
+            self._current_feed = None     # selected feed dict, or None (=All)
             self._current_scope = ALL_ID
             self._current_article = None
             self._search_text = ""
@@ -143,13 +134,15 @@ def build_app():
             try:
                 self.store = Store(store_path)
             except FeedHubError as exc:
-                messagebox.showerror(APP_NAME, f"Could not open the feed store:\n{exc}")
+                messagebox.showerror(
+                    APP_NAME, f"Could not open the feed store:\n{exc}")
                 raise
 
             self._set_icon()
             self._build_menu()
-            self._build_layout()
-            self._apply_theme()
+            self.add_section("feeds", "Feeds", "▤", self._build_feeds)
+            self.add_section("about", "About", "ℹ", self._build_about)
+            self.show("feeds")
             self.protocol("WM_DELETE_WINDOW", self._on_close)
 
             self.after(50, self._reload_feeds)
@@ -159,7 +152,7 @@ def build_app():
         def _set_icon(self):
             try:
                 ico = asset_path("feed-hub.ico")
-                if ico:
+                if ico and os.name == "nt":
                     self.iconbitmap(ico)
                     return
             except Exception:
@@ -168,100 +161,12 @@ def build_app():
                 png = asset_path("feed-hub.png")
                 if png:
                     img = tk.PhotoImage(file=png)
-                    self._img_refs.append(img)
+                    self._img_refs_gui.append(img)
                     self.iconphoto(True, img)
             except Exception:
                 pass  # icon is cosmetic; never block launch
 
-        # ---- theming --------------------------------------------------------
-        def track(self, widget, role):
-            self._tracked.append((widget, role))
-
-        def _pal(self):
-            return PALETTES[self.theme]
-
-        def _apply_theme(self):
-            p = self._pal()
-            style = ttk.Style(self)
-            try:
-                style.theme_use("clam")
-            except Exception:
-                pass
-            self.configure(bg=p["bg"])
-            style.configure(".", background=p["bg"], foreground=p["text"],
-                            fieldbackground=p["entry"], bordercolor=p["border"],
-                            font=(FONT, 10))
-            style.configure("TFrame", background=p["bg"])
-            style.configure("Surface.TFrame", background=p["surface"])
-            style.configure("Toolbar.TFrame", background=p["surface"])
-            style.configure("TLabel", background=p["bg"], foreground=p["text"])
-            style.configure("Muted.TLabel", background=p["bg"], foreground=p["muted"])
-            style.configure("Surface.TLabel", background=p["surface"],
-                            foreground=p["text"])
-            style.configure("Header.TLabel", background=p["surface"],
-                            foreground=p["text"], font=(FONT, 15, "bold"))
-            style.configure("Meta.TLabel", background=p["surface"],
-                            foreground=p["muted"], font=(FONT, 10))
-            style.configure("Status.TLabel", background=p["surface"],
-                            foreground=p["muted"])
-            style.configure("TButton", background=p["surface"], foreground=p["text"],
-                            bordercolor=p["border"], focuscolor=p["surface"],
-                            padding=(10, 5))
-            style.map("TButton",
-                      background=[("active", p["trough"]), ("disabled", p["bg"])],
-                      foreground=[("disabled", p["muted"])])
-            style.configure("Accent.TButton", background=p["primary"],
-                            foreground="#ffffff", padding=(12, 6))
-            style.map("Accent.TButton",
-                      background=[("active", p["primary_hi"]),
-                                  ("disabled", p["border"])],
-                      foreground=[("disabled", p["muted"])])
-            style.configure("TEntry", fieldbackground=p["entry"], foreground=p["text"],
-                            insertcolor=p["text"], bordercolor=p["border"])
-            style.configure("Treeview", background=p["surface"],
-                            fieldbackground=p["surface"], foreground=p["text"],
-                            bordercolor=p["border"], rowheight=26)
-            style.map("Treeview", background=[("selected", p["primary"])],
-                      foreground=[("selected", p["sel_fg"])])
-            style.configure("Treeview.Heading", background=p["surface"],
-                            foreground=p["muted"], font=(FONT, 9, "bold"))
-            style.configure("TScrollbar", background=p["surface"],
-                            troughcolor=p["bg"], bordercolor=p["border"],
-                            arrowcolor=p["text"])
-            style.configure("TPanedwindow", background=p["bg"])
-            style.configure("TSeparator", background=p["border"])
-
-            # manually re-colour raw tk widgets (Text)
-            for widget, role in list(self._tracked):
-                try:
-                    if role == "text":
-                        widget.configure(bg=p["surface"], fg=p["text"],
-                                         insertbackground=p["text"],
-                                         selectbackground=p["primary"],
-                                         selectforeground=p["sel_fg"],
-                                         highlightthickness=1,
-                                         highlightbackground=p["border"],
-                                         borderwidth=0)
-                        widget.tag_configure("title", font=(FONT, 16, "bold"),
-                                             foreground=p["text"],
-                                             spacing3=6)
-                        widget.tag_configure("meta", foreground=p["muted"],
-                                             font=(FONT, 10), spacing3=10)
-                        widget.tag_configure("body", font=(FONT, 11), spacing1=2,
-                                             spacing3=4)
-                except Exception:
-                    pass
-            self._restyle_status()
-
-        def toggle_theme(self):
-            self.theme = "dark" if self.theme == "light" else "light"
-            guiconfig.set_theme(self.theme)
-            self._apply_theme()
-            self._theme_btn.configure(
-                text="☀ Light" if self.theme == "dark" else "🌙 Dark")
-            self._render_article()  # refresh Text tag colours
-
-        # ---- menu -----------------------------------------------------------
+        # ---- menu (native menus stay; theme lives in the sidebar toggle too)
         def _build_menu(self):
             bar = tk.Menu(self)
             filem = tk.Menu(bar, tearoff=0)
@@ -278,13 +183,16 @@ def build_app():
             bar.add_cascade(label="File", menu=filem)
 
             viewm = tk.Menu(bar, tearoff=0)
-            viewm.add_command(label="Toggle dark mode", command=self.toggle_theme)
+            viewm.add_command(
+                label="Toggle dark mode",
+                command=lambda: self.set_theme(
+                    "light" if self.theme == "dark" else "dark"))
             viewm.add_command(label="Auto-refresh interval…",
                               command=self._set_interval)
             bar.add_cascade(label="View", menu=viewm)
 
             helpm = tk.Menu(bar, tearoff=0)
-            helpm.add_command(label="About", command=self._about)
+            helpm.add_command(label="About", command=lambda: self.show("about"))
             helpm.add_command(label="Open project page (quickopen.ai)",
                               command=lambda: open_url(PROJECT_URL))
             bar.add_cascade(label="Help", menu=helpm)
@@ -292,38 +200,35 @@ def build_app():
             self.bind_all("<Control-n>", lambda e: self._add_feed())
             self.bind_all("<Control-r>", lambda e: self._refresh(scope="all"))
 
-        # ---- layout ---------------------------------------------------------
-        def _build_layout(self):
-            # Toolbar
-            tb = ttk.Frame(self, style="Toolbar.TFrame", padding=(10, 8))
-            tb.pack(side="top", fill="x")
-            ttk.Button(tb, text="＋ Add feed", style="Accent.TButton",
-                       command=self._add_feed).pack(side="left")
-            self._refresh_btn = ttk.Button(tb, text="⟳ Refresh",
-                                           command=lambda: self._refresh())
-            self._refresh_btn.pack(side="left", padx=(6, 0))
-            ttk.Button(tb, text="✓ Mark all read",
-                       command=self._mark_all_read).pack(side="left", padx=(6, 0))
+        # =================================================================
+        # Feeds section — the three-pane reader
+        # =================================================================
+        def _build_feeds(self, frame):
+            # -- toolbar
+            tb = ctk.CTkFrame(frame, fg_color="transparent")
+            tb.pack(side="top", fill="x", pady=(0, 12))
+            aura.AuraButton(tb, "Add feed", kind="primary",
+                            command=self._add_feed).pack(side="left")
+            self._refresh_btn = aura.AuraButton(
+                tb, "⟳ Refresh", kind="secondary",
+                command=lambda: self._refresh())
+            self._refresh_btn.pack(side="left", padx=(8, 0))
+            aura.AuraButton(tb, "Mark all read", kind="secondary",
+                            command=self._mark_all_read).pack(
+                side="left", padx=(8, 0))
+            # search box (no textvariable: CTkEntry placeholders need it absent)
+            self._search_entry = aura.AuraEntry(
+                tb, placeholder="Search articles…", width=240)
+            self._search_entry.pack(side="right")
+            self._search_entry.bind("<KeyRelease>", lambda _e: self._on_search())
 
-            self._theme_btn = ttk.Button(
-                tb, text="☀ Light" if self.theme == "dark" else "🌙 Dark",
-                command=self.toggle_theme)
-            self._theme_btn.pack(side="right")
+            # -- three-pane body
+            panes = ttk.Panedwindow(frame, orient="horizontal")
+            panes.pack(side="top", fill="both", expand=True)
 
-            self._search_var = tk.StringVar()
-            search_entry = ttk.Entry(tb, textvariable=self._search_var, width=26)
-            search_entry.pack(side="right", padx=(0, 8))
-            search_entry.insert(0, "")
-            self._search_var.trace_add("write", lambda *_: self._on_search())
-            ttk.Label(tb, text="Search:", style="Surface.TLabel").pack(
-                side="right", padx=(0, 4))
-
-            # Three-pane body
-            panes = ttk.Panedwindow(self, orient="horizontal")
-            panes.pack(side="top", fill="both", expand=True, padx=8, pady=(6, 0))
-
-            # -- left: feed tree
-            left = ttk.Frame(panes, style="Surface.TFrame")
+            # left: feed tree
+            left = ctk.CTkFrame(panes, fg_color=aura._pair("surface"),
+                                corner_radius=0)
             self.feed_tree = ttk.Treeview(left, show="tree", selectmode="browse")
             fsb = ttk.Scrollbar(left, orient="vertical",
                                 command=self.feed_tree.yview)
@@ -335,17 +240,22 @@ def build_app():
             self.feed_tree.bind("<Button-3>", self._feed_context_menu)
             panes.add(left, weight=1)
 
-            # -- middle: article list
-            mid = ttk.Frame(panes, style="Surface.TFrame")
+            # middle: article list
+            mid = ctk.CTkFrame(panes, fg_color=aura._pair("surface"),
+                               corner_radius=0)
             cols = ("state", "title", "date")
             self.article_list = ttk.Treeview(mid, columns=cols, show="headings",
                                              selectmode="browse")
-            self.article_list.heading("state", text="")
-            self.article_list.heading("title", text="Article")
-            self.article_list.heading("date", text="Date")
-            self.article_list.column("state", width=34, anchor="center", stretch=False)
-            self.article_list.column("title", width=340, anchor="w")
-            self.article_list.column("date", width=130, anchor="w", stretch=False)
+            self.article_list.heading("state", text="", anchor="w")
+            self.article_list.heading("title", text=aura.spaced("Article"),
+                                      anchor="w")
+            self.article_list.heading("date", text=aura.spaced("Date"),
+                                      anchor="w")
+            self.article_list.column("state", width=34, anchor="center",
+                                     stretch=False)
+            self.article_list.column("title", width=220, anchor="w",
+                                     stretch=True)
+            self.article_list.column("date", width=120, anchor="w", stretch=False)
             asb = ttk.Scrollbar(mid, orient="vertical",
                                 command=self.article_list.yview)
             self.article_list.configure(yscrollcommand=asb.set)
@@ -355,51 +265,71 @@ def build_app():
             self.article_list.bind("<space>", lambda e: self._toggle_star())
             panes.add(mid, weight=2)
 
-            # -- right: reader
-            right = ttk.Frame(panes, style="Surface.TFrame", padding=0)
-            rtop = ttk.Frame(right, style="Surface.TFrame", padding=(10, 8))
-            rtop.pack(side="top", fill="x")
-            self._open_btn = ttk.Button(rtop, text="Open in browser",
-                                        command=self._open_current, state="disabled")
+            # right: reader
+            right = ctk.CTkFrame(panes, fg_color=aura._pair("surface"),
+                                 corner_radius=0)
+            rtop = ctk.CTkFrame(right, fg_color="transparent")
+            rtop.pack(side="top", fill="x", padx=10, pady=(10, 4))
+            self._open_btn = aura.AuraButton(
+                rtop, "Open in browser", kind="secondary", height=30,
+                command=self._open_current)
             self._open_btn.pack(side="right")
-            self._star_btn = ttk.Button(rtop, text="☆ Star",
-                                        command=self._toggle_star, state="disabled")
-            self._star_btn.pack(side="right", padx=(0, 6))
+            self._star_btn = aura.AuraButton(
+                rtop, "Star", kind="ghost", height=30,
+                command=self._toggle_star)
+            self._star_btn.pack(side="right", padx=(0, 8))
+            # width/height are kept small: tk.Text sizes its request in PIXELS
+            # by font metrics, and the default 80x24 over-requests badly and
+            # crushes the sibling panes — it fills via expand regardless.
             self.reader = tk.Text(right, wrap="word", padx=16, pady=14,
-                                  relief="flat", cursor="arrow", state="disabled")
+                                  relief="flat", cursor="arrow", bd=0,
+                                  width=30, height=8, state="disabled")
             self.reader.pack(side="left", fill="both", expand=True)
-            self.track(self.reader, "text")
+            aura.track(self.reader, "text")
+            self._style_reader_tags()
             panes.add(right, weight=3)
 
-            # Status / error bar
-            self._status_bar = tk.Frame(self, height=26)
-            self._status_bar.pack(side="bottom", fill="x")
-            self.status_lbl = tk.Label(self._status_bar, anchor="w", padx=10)
-            self.status_lbl.pack(side="left", fill="x", expand=True)
-            self._set_status("Ready")
+            self._open_btn.state(["disabled"])
+            self._star_btn.state(["disabled"])
+            self._panes = panes
+            self.after(120, self._init_sashes)
 
-        def _restyle_status(self):
-            p = self._pal()
+        def _init_sashes(self):
+            """Give the three panes sensible initial widths (feed / list / read)."""
             try:
-                self._status_bar.configure(bg=p["surface"],
-                                           highlightthickness=1,
-                                           highlightbackground=p["border"])
-                self.status_lbl.configure(bg=p["surface"], fg=p["muted"])
+                total = self._panes.winfo_width()
+                if total <= 1:
+                    self.after(120, self._init_sashes)
+                    return
+                self._panes.sashpos(0, int(total * 0.22))
+                self._panes.sashpos(1, int(total * 0.22) + int(total * 0.34))
             except Exception:
                 pass
 
-        # ---- status / error bar --------------------------------------------
-        def _set_status(self, text, kind="idle"):
-            p = self._pal()
-            color = {"working": p["primary"], "ok": p["ok"], "err": p["err"]}.get(
-                kind, p["muted"])
+        # ---- reader tag colours (track() flips bg/fg but not tag colours) ---
+        def _style_reader_tags(self):
+            if not hasattr(self, "reader"):
+                return
+            p = aura.P()
+            fam = self._font_family
             try:
-                self.status_lbl.configure(text=text, fg=color)
+                self.reader.tag_configure("title", font=(fam, 16, "bold"),
+                                          foreground=p["text"], spacing3=6)
+                self.reader.tag_configure("meta", foreground=p["muted"],
+                                          font=(fam, 10), spacing3=10)
+                self.reader.tag_configure("body", font=(fam, 11), spacing1=2,
+                                          spacing3=4)
             except Exception:
                 pass
 
-        def _show_error(self, message):
-            self._set_status("✕ " + str(message), kind="err")
+        # ---- theme override: re-tint the raw tk reader on dark<->light ------
+        def set_theme(self, theme):
+            super().set_theme(theme)
+            self._style_reader_tags()
+            try:
+                self._render_article()   # re-render with the new tag colours
+            except Exception:
+                pass
 
         # ---- background runner ---------------------------------------------
         def _bg(self, work, on_ok, busy="Working…"):
@@ -409,14 +339,14 @@ def build_app():
             never as a traceback.  Refuses to start a second op while busy.
             """
             if self._busy:
-                self._show_error("Please wait — a refresh is already running.")
+                self.set_error("Please wait — a refresh is already running.")
                 return
             self._busy = True
             try:
                 self._refresh_btn.state(["disabled"])
             except Exception:
                 pass
-            self._set_status(busy, kind="working")
+            self.set_status(busy, kind="working")
 
             def run():
                 try:
@@ -434,12 +364,12 @@ def build_app():
                 except Exception:
                     pass
                 if err is not None:
-                    self._show_error(err)
+                    self.set_error(err)
                     return
                 try:
                     on_ok(res)
                 except Exception as ex:
-                    self._show_error(f"Post-processing error: {ex}")
+                    self.set_error(f"Post-processing error: {ex}")
 
             threading.Thread(target=run, daemon=True).start()
 
@@ -451,7 +381,7 @@ def build_app():
                 counts = self.store.unread_counts()
                 total_unread = self.store.unread_count()
             except FeedHubError as exc:
-                self._show_error(exc)
+                self.set_error(exc)
                 return
             self.feed_tree.delete(*self.feed_tree.get_children())
             self._feed_iids = {}
@@ -460,9 +390,9 @@ def build_app():
                 return f"{text}  ({unread})" if unread else text
 
             self.feed_tree.insert("", "end", iid=ALL_ID,
-                                  text=label("📚 All feeds", total_unread),
+                                  text=label("▤ All feeds", total_unread),
                                   open=True)
-            self.feed_tree.insert("", "end", iid=STARRED_ID, text="⭐ Starred")
+            self.feed_tree.insert("", "end", iid=STARRED_ID, text="★ Starred")
 
             folders = {}
             for feed in feeds:
@@ -472,7 +402,7 @@ def build_app():
                     fiid = "folder:" + folder
                     if fiid not in folders:
                         self.feed_tree.insert("", "end", iid=fiid,
-                                              text="📁 " + folder, open=True)
+                                              text="◈ " + folder, open=True)
                         folders[fiid] = 0
                     parent = fiid
                 iid = "feed:%d" % feed["id"]
@@ -565,7 +495,7 @@ def build_app():
             try:
                 arts = self._collect_articles()
             except FeedHubError as exc:
-                self._show_error(exc)
+                self.set_error(exc)
                 return
             self.article_list.delete(*self.article_list.get_children())
             self._article_iids = {}
@@ -581,9 +511,9 @@ def build_app():
             self._current_article = None
             self._clear_reader()
             if not arts:
-                self._set_status("No articles here yet — try Refresh.")
+                self.set_status("No articles here yet — try Refresh.")
             else:
-                self._set_status(f"{len(arts)} article(s).")
+                self.set_status(f"{len(arts)} article(s).")
 
         def _on_article_select(self, _event=None):
             sel = self.article_list.selection()
@@ -601,7 +531,7 @@ def build_app():
                     self.article_list.set(sel[0], "state",
                                           "★" if art["starred"] else "")
                 except FeedHubError as exc:
-                    self._show_error(exc)
+                    self.set_error(exc)
                 self._reload_feeds()
             self._render_article()
 
@@ -612,9 +542,11 @@ def build_app():
             self.reader.configure(state="disabled")
             self._open_btn.state(["disabled"])
             self._star_btn.state(["disabled"])
-            self._star_btn.configure(text="☆ Star")
+            self._star_btn.configure(text="Star")
 
         def _render_article(self):
+            if not hasattr(self, "reader"):
+                return
             art = self._current_article
             self.reader.configure(state="normal")
             self.reader.delete("1.0", "end")
@@ -632,7 +564,7 @@ def build_app():
             self.reader.configure(state="disabled")
             self._open_btn.state(["!disabled"] if art.get("link") else ["disabled"])
             self._star_btn.state(["!disabled"])
-            self._star_btn.configure(text="★ Unstar" if art["starred"] else "☆ Star")
+            self._star_btn.configure(text="Unstar" if art["starred"] else "Star")
 
         def _open_current(self):
             if self._current_article and self._current_article.get("link"):
@@ -646,7 +578,7 @@ def build_app():
             try:
                 self.store.mark_starred(art["id"], bool(new))
             except FeedHubError as exc:
-                self._show_error(exc)
+                self.set_error(exc)
                 return
             art["starred"] = new
             iid = "art:%d" % art["id"]
@@ -654,7 +586,7 @@ def build_app():
                 self.article_list.set(
                     iid, "state",
                     ("★" if new else "") + ("" if art["read"] else "●"))
-            self._star_btn.configure(text="★ Unstar" if new else "☆ Star")
+            self._star_btn.configure(text="Unstar" if new else "Star")
             if self._current_scope == STARRED_ID:
                 self._reload_articles()
 
@@ -670,18 +602,18 @@ def build_app():
             try:
                 feed = self.store.add_feed(url, folder=folder.strip())
             except FeedHubError as exc:
-                self._show_error(exc)
+                self.set_error(exc)
                 return
             self._current_feed = feed
             self._current_scope = "feed:%d" % feed["id"]
             self._reload_feeds()
-            self._set_status(f"Added {url} — refreshing…")
+            self.set_status(f"Added {url} — refreshing…")
             self._refresh(scope="feed", feed=feed)
 
         def _remove_feed(self):
             feed = self._current_feed
             if not feed:
-                self._show_error("Select a feed to remove.")
+                self.set_error("Select a feed to remove.")
                 return
             name = feed.get("title") or feed.get("url")
             if not messagebox.askyesno("Remove feed",
@@ -690,13 +622,13 @@ def build_app():
             try:
                 self.store.remove_feed(feed["id"])
             except FeedHubError as exc:
-                self._show_error(exc)
+                self.set_error(exc)
                 return
             self._current_feed = None
             self._current_scope = ALL_ID
             self._reload_feeds()
             self._reload_articles()
-            self._set_status(f"Removed {name}.")
+            self.set_status(f"Removed {name}.")
 
         def _set_folder(self):
             feed = self._current_feed
@@ -710,7 +642,7 @@ def build_app():
             try:
                 self.store.set_feed_folder(feed["id"], folder.strip())
             except FeedHubError as exc:
-                self._show_error(exc)
+                self.set_error(exc)
                 return
             self._reload_feeds()
 
@@ -722,7 +654,7 @@ def build_app():
                     for feed in self.store.list_feeds():
                         self.store.mark_all_read(feed["id"], True)
             except FeedHubError as exc:
-                self._show_error(exc)
+                self.set_error(exc)
                 return
             self._reload_feeds()
             self._reload_articles()
@@ -740,7 +672,7 @@ def build_app():
             else:
                 targets = self.store.list_feeds()
             if not targets:
-                self._set_status("No feeds to refresh — add one first.")
+                self.set_status("No feeds to refresh — add one first.")
                 return
 
             def work():
@@ -759,24 +691,23 @@ def build_app():
                 self._reload_feeds()
                 self._reload_articles()
                 if failures and len(failures) == n:
-                    self._show_error(f"Refresh failed: {failures[0][1]}")
+                    self.set_error(f"Refresh failed: {failures[0][1]}")
                 elif failures:
-                    self._set_status(
+                    self.set_status(
                         f"{total_new} new; {len(failures)} feed(s) failed.",
                         kind="ok")
                 else:
-                    self._set_status(f"Refreshed — {total_new} new article(s).",
-                                     kind="ok")
+                    self.set_status(f"Refreshed — {total_new} new article(s).",
+                                    kind="ok")
 
             self._bg(work, done, busy=f"Refreshing {len(targets)} feed(s)…")
 
         def _on_search(self):
-            self._search_text = self._search_var.get().strip()
+            self._search_text = self._search_entry.get().strip()
             self._reload_articles()
 
         # ---- OPML -----------------------------------------------------------
         def _import_opml(self):
-            from tkinter import filedialog
             path = filedialog.askopenfilename(
                 title="Import OPML",
                 filetypes=[("OPML files", "*.opml *.xml"), ("All files", "*.*")])
@@ -786,13 +717,12 @@ def build_app():
                 with open(path, "r", encoding="utf-8") as fh:
                     added = opml_mod.import_opml(self.store, fh.read())
             except (OSError, FeedHubError) as exc:
-                self._show_error(exc)
+                self.set_error(exc)
                 return
             self._reload_feeds()
-            self._set_status(f"Imported {len(added)} new feed(s).", kind="ok")
+            self.set_status(f"Imported {len(added)} new feed(s).", kind="ok")
 
         def _export_opml(self):
-            from tkinter import filedialog
             path = filedialog.asksaveasfilename(
                 title="Export OPML", defaultextension=".opml",
                 filetypes=[("OPML files", "*.opml"), ("All files", "*.*")])
@@ -803,9 +733,9 @@ def build_app():
                 with open(path, "w", encoding="utf-8") as fh:
                     fh.write(text)
             except (OSError, FeedHubError) as exc:
-                self._show_error(exc)
+                self.set_error(exc)
                 return
-            self._set_status(f"Exported to {path}.", kind="ok")
+            self.set_status(f"Exported to {path}.", kind="ok")
 
         # ---- auto-refresh ---------------------------------------------------
         def _schedule_auto_refresh(self):
@@ -835,18 +765,40 @@ def build_app():
             self._refresh_minutes = minutes
             guiconfig.set_refresh_minutes(minutes)
             self._schedule_auto_refresh()
-            self._set_status(
+            self.set_status(
                 "Auto-refresh off." if not minutes
                 else f"Auto-refresh every {minutes} min.")
 
-        # ---- misc -----------------------------------------------------------
-        def _about(self):
-            messagebox.showinfo(
-                "About " + APP_NAME,
-                f"{APP_NAME} {APP_VERSION}\n\n"
-                "A fast, offline, 100% open-source RSS & Atom reader.\n"
-                "Built by AI, published on QuickOpen.\n\n" + PROJECT_URL)
+        # =================================================================
+        # About section
+        # =================================================================
+        def _build_about(self, frame):
+            card = aura.Card(frame, title="About FeedHub")
+            card.pack(fill="x")
+            aura.Heading(card.body, APP_NAME).pack(anchor="w")
+            aura.Caption(card.body, f"Version {APP_VERSION}").pack(
+                anchor="w", pady=(0, 10))
+            ctk.CTkLabel(
+                card.body, font=aura.font(), justify="left", anchor="w",
+                wraplength=560,
+                text="A fast, offline, 100% open-source RSS & Atom reader. "
+                     "Organize feeds into folders, read a clean article view, "
+                     "mark read/unread and star for later, search across "
+                     "everything, and import/export your subscriptions as "
+                     "OPML.\n\n"
+                     "Feeds refresh on a schedule; everything is stored "
+                     "locally. Nothing is ever uploaded anywhere.").pack(
+                anchor="w")
+            aura.Caption(card.body,
+                         "Licensed under Apache-2.0. Built on feedparser (BSD) "
+                         "and CustomTkinter (MIT).").pack(
+                anchor="w", pady=(10, 4))
+            aura.AuraButton(card.body, "Project page: quickopen.ai",
+                            kind="ghost",
+                            command=lambda: open_url(PROJECT_URL)).pack(
+                anchor="w", pady=(6, 0))
 
+        # ---- lifecycle ------------------------------------------------------
         def _on_close(self):
             try:
                 guiconfig.set_unread_only(self._unread_only)
@@ -865,8 +817,8 @@ def main():
     """Entry point: build the root window and run.  Degrades on headless hosts.
 
     Importing this module does nothing; only this function creates a Tk root.
-    With no display (e.g. a server), it prints a friendly note and returns 0
-    instead of raising.
+    With no display (e.g. a server) or without customtkinter installed, it
+    prints a friendly note and returns 0 instead of raising.
     """
     try:
         import tkinter as tk
@@ -878,6 +830,10 @@ def main():
     try:
         App = build_app()
         app = App()
+    except ImportError as exc:
+        print(f"{APP_NAME}: the GUI needs the 'customtkinter' package "
+              f"({exc}). Install it with:  pip install customtkinter")
+        return 0
     except tk.TclError as exc:
         # Typically "no display name and no $DISPLAY environment variable".
         print(f"{APP_NAME}: no graphical display available — cannot start the "

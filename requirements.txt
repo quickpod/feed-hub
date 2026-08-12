@@ -1,2 +1,5 @@
 # FeedHub runtime deps — permissive/weak-copyleft only, no AGPL/proprietary.
 feedparser>=6.0
+# GUI: the Aura design system runs on CustomTkinter (MIT) + darkdetect.
+customtkinter>=5.2
+darkdetect>=0.8

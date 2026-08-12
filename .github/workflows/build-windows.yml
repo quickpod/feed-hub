@@ -20,8 +20,10 @@ jobs:
           pyinstaller --onefile --windowed --name FeedHub
           --icon feed-hub.ico
           --version-file packaging/version.txt
+          --hidden-import feedhub.__main__
           --add-data "feed-hub.ico;."
           --collect-submodules feedparser
+          --collect-all customtkinter
           feed_hub_app.py
       - name: Stage installer inputs
         shell: pwsh
@@ -41,4 +43,10 @@ jobs:
           path: |
             dist/FeedHub.exe
             packaging/dist/FeedHub-Setup.exe
+          if-no-files-found: error
+      - name: Upload staging (for signed repack)
+        uses: actions/upload-artifact@v4
+        with:
+          name: feed-hub-staging
+          path: packaging/staging
           if-no-files-found: error

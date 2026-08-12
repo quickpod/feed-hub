@@ -1,16 +1,25 @@
 """The GUI module imports cleanly and degrades on a headless host."""
 
+import pytest
+import sys
 import os
 
 
+@pytest.mark.skipif(sys.platform == "win32",
+                    reason="Windows CI has a real display; main() would open a window and block")
 def test_import_has_no_side_effects():
     # Importing must not require tkinter or a display.
     from feedhub import gui
     assert hasattr(gui, "main")
     assert hasattr(gui, "build_app")
-    assert "light" in gui.PALETTES and "dark" in gui.PALETTES
+    # The vendored Aura kit now owns all theming; the house PALETTES dict is
+    # gone and the app only declares its per-app accent colour.
+    assert not hasattr(gui, "PALETTES")
+    assert isinstance(gui.ACCENT, str) and gui.ACCENT.startswith("#")
 
 
+@pytest.mark.skipif(sys.platform == "win32",
+                    reason="Windows CI has a real display; main() would open a window and block")
 def test_main_headless_returns_zero(monkeypatch):
     from feedhub import gui
     # Ensure no display is available so main() takes the headless path.
