@@ -1,0 +1,13 @@
+{
+  "slug": "feed-hub",
+  "name": "FeedHub",
+  "tagline": "An RSS/Atom reader with folders, search, read-later and OPML import/export.",
+  "categorySlug": "feed-readers",
+  "license": "Apache-2.0",
+  "description": "Follow websites, blogs and podcasts via RSS/Atom: organize feeds into folders, read a clean article view, mark read/unread and star for later, search across everything, and import/export your subscriptions as OPML. Refreshes on a schedule; everything is stored locally.",
+  "aiStack": "Python (tkinter + CLI), feedparser",
+  "platforms": [
+    "windows"
+  ],
+  "buildEntry": "feed_hub_app.py"
+}
