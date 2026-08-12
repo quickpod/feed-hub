@@ -7,7 +7,8 @@
   "description": "Follow websites, blogs and podcasts via RSS/Atom: organize feeds into folders, read a clean article view, mark read/unread and star for later, search across everything, and import/export your subscriptions as OPML. Refreshes on a schedule; everything is stored locally.",
   "aiStack": "Python (tkinter + CLI), feedparser",
   "platforms": [
-    "windows"
+    "windows",
+    "linux"
   ],
   "buildEntry": "feed_hub_app.py"
 }
