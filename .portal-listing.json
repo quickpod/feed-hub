@@ -1,0 +1,4 @@
+{
+  "tagline": "A calm three-pane RSS/Atom reader — folders, unread counts, starred read-later, search and OPML",
+  "description": "FeedHub is a fast, fully-offline RSS & Atom reader with the classic three-column layout: your feed library (folders, live unread counts, starred) in the sidebar, a clean article list with an unread filter, and a distraction-free reader. Articles mark read as you open them; Space stars for later, Enter opens the original in your browser. Full-text search across everything, timed auto-refresh, OPML import/export, and a System/Light/Dark theme that follows your OS live. Everything is stored locally — nothing is ever uploaded anywhere. 100% AI-built and open source."
+}

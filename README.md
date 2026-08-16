@@ -31,7 +31,8 @@ python -m feedhub --help    # CLI
 - **Auto-refresh** — feeds refresh on a configurable timer; manual refresh runs on a background thread so the UI never freezes.
 - **OPML import/export** — move your subscriptions (and folders) in and out, round-trip safe.
 - **Offline & local** — everything lives in a per-user SQLite store; nothing is uploaded anywhere.
-- **Dark mode** — light/dark theme toggle in the QuickOpen palette; your choice is remembered.
+- **Keyboard flow** — Ctrl+N add feed, Ctrl+F search, F5 refresh, Space stars, Enter opens the original, Ctrl+, settings, Ctrl+\ collapses the sidebar.
+- **System/Light/Dark theme** — fresh installs follow the OS appearance live (Aura Dark/Light); an explicit choice in Settings is remembered.
 
 ## CLI examples
 

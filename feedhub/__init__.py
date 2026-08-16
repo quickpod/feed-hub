@@ -23,7 +23,7 @@ from .feeds import parse, fetch, fetch_and_parse, refresh
 from .opml import parse_opml, import_opml, export_opml
 from .reader import clean_html, to_text
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 __all__ = [
     "FeedHubError",

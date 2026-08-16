@@ -1,13 +1,15 @@
 r"""Tiny JSON-backed config for the FeedHub GUI.
 
 Stores just the presentation preferences and never raises: the chosen theme
-("light"/"dark"), the auto-refresh interval (minutes; 0 disables) and whether
-the article list hides already-read items.  Subscriptions themselves live in
-the SQLite store (see :mod:`feedhub.store`), not here.
+("system"/"light"/"dark" — "system" follows the OS Aura appearance live and is
+the fresh-install default), the auto-refresh interval (minutes; 0 disables)
+and whether the article list hides already-read items.  Subscriptions
+themselves live in the SQLite store (see :mod:`feedhub.store`), not here.
 
 On Windows the file lives at ``%LOCALAPPDATA%\FeedHub\config.json``; elsewhere
-it falls back to ``~/.feedhub/config.json``.  Every function is defensive -- a
-corrupt or unreadable config must never stop the app from starting.
+it falls back to ``~/.feedhub/config.json``.  ``FEEDHUB_HOME`` overrides the
+directory (tests use this).  Every function is defensive -- a corrupt or
+unreadable config must never stop the app from starting.
 """
 
 from __future__ import annotations
@@ -18,7 +20,8 @@ import os
 APP_DIRNAME = "FeedHub"
 CONFIG_NAME = "config.json"
 STORE_NAME = "feedhub.db"
-VALID_THEMES = ("light", "dark")
+# "system" follows the OS Aura Dark/Light live (the fresh-install default).
+VALID_THEMES = ("system", "light", "dark")
 DEFAULT_REFRESH_MINUTES = 30
 MAX_REFRESH_MINUTES = 24 * 60
 
@@ -26,8 +29,12 @@ MAX_REFRESH_MINUTES = 24 * 60
 def config_dir():
     r"""Directory that holds the config + store (created on demand).
 
-    ``%LOCALAPPDATA%\FeedHub`` on Windows, ``~/.feedhub`` otherwise.
+    ``%LOCALAPPDATA%\FeedHub`` on Windows, ``~/.feedhub`` otherwise.  Honours
+    ``FEEDHUB_HOME`` when set so tests can redirect everything to a tmp dir.
     """
+    override = os.environ.get("FEEDHUB_HOME")
+    if override:
+        return override
     local = os.environ.get("LOCALAPPDATA")
     if local and os.name == "nt":
         return os.path.join(local, APP_DIRNAME)
@@ -44,7 +51,7 @@ def store_path():
 
 
 def _defaults():
-    return {"theme": "light", "refresh_minutes": DEFAULT_REFRESH_MINUTES,
+    return {"theme": "system", "refresh_minutes": DEFAULT_REFRESH_MINUTES,
             "unread_only": False}
 
 
@@ -80,7 +87,7 @@ def save(cfg):
     try:
         os.makedirs(config_dir(), exist_ok=True)
         clean = {
-            "theme": cfg.get("theme") if cfg.get("theme") in VALID_THEMES else "light",
+            "theme": cfg.get("theme") if cfg.get("theme") in VALID_THEMES else "system",
             "refresh_minutes": _clean_refresh(cfg.get("refresh_minutes")),
             "unread_only": bool(cfg.get("unread_only", False)),
         }
@@ -93,7 +100,9 @@ def save(cfg):
 
 
 def get_theme():
-    return load().get("theme", "light")
+    """The persisted theme preference: "system" (follow the OS), "light" or
+    "dark".  Fresh installs return "system" so the app follows Aura live."""
+    return load().get("theme", "system")
 
 
 def set_theme(theme):
